@@ -20,6 +20,7 @@ public:
 
     void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
     static FSA unionExpression(const FSA &left, const FSA &right);
+    static FSA concatenationExpression(const FSA &left, const FSA &right);
 };
 
 FSA::FSA(char symbol = '\0') : initialState(0), nextState(0)
@@ -79,6 +80,7 @@ FSA FSA::unionExpression(const FSA &left, const FSA &right)
 {
     FSA resultFSA;
     resultFSA.transitions.erase(0);
+    resultFSA.nextState = 1;
 
     std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
 
@@ -96,5 +98,24 @@ FSA FSA::unionExpression(const FSA &left, const FSA &right)
     resultFSA.transitions[left.finalState + leftOffset]['\0'].push_back(resultFSA.finalState);
     resultFSA.transitions[right.finalState + rightOffset]['\0'].push_back(resultFSA.finalState);
 
+    return resultFSA;
+}
+
+FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
+{
+    FSA resultFSA;
+    resultFSA.transitions.erase(0);
+    resultFSA.nextState = 0;
+
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    resultFSA.copyTransitionsWithOffset(resultFSA.nextState, left);
+    resultFSA.nextState--;
+
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    resultFSA.copyTransitionsWithOffset(resultFSA.nextState, right);
+    resultFSA.nextState--;
+
+    resultFSA.finalState = resultFSA.nextState++;
+    
     return resultFSA;
 }
