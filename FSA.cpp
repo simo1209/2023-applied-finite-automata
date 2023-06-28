@@ -71,17 +71,44 @@ void FSA::print()
 
 void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 {
-    for (const auto &[fromState, symbolToStates] : other.transitions)
+    std::map<size_t, size_t> visited;
+    std::queue<std::pair<size_t, size_t>> fsaQueue;
+
+    visited[other.initialState] = offset;
+    fsaQueue.push(std::make_pair(other.initialState, offset));
+
+    while (!fsaQueue.empty())
     {
-        for (const auto &[symbol, toStates] : symbolToStates)
+        auto &[currentOtherState, currentState] = fsaQueue.front();
+        std::cerr << "visiting " << currentOtherState << std::endl;
+        std::cerr << "offset = " << currentState << std::endl;
+        fsaQueue.pop();
+
+        if (other.transitions.find(currentOtherState) != other.transitions.end())
         {
-            for (const auto &toState : toStates)
+            for (const auto &[symbol, toStates] : other.transitions.at(currentOtherState))
             {
-                transitions[fromState + offset][symbol].push_back(toState + offset);
+                for (const auto &toState : toStates)
+                {
+                    std::cerr << "setting transition " << currentState << ' ' << symbol << ' ' << ++offset << std::endl;
+                    if (visited.find(toState) != visited.end())
+                    {
+                        std::cerr << toState << " already vsited. reusing " << visited[toState] << std::endl;
+                        transitions[currentState][symbol].push_back(visited[toState]);
+                        fsaQueue.push(std::make_pair(toState, visited[toState]));
+                    }
+                    else
+                    {
+                        transitions[currentState][symbol].push_back(offset);
+                        visited[toState] = offset;
+                        fsaQueue.push(std::make_pair(toState, offset));
+                    }
+                }
             }
         }
     }
-    nextState = other.finalState + offset + 1;
+
+    nextState = offset + 1;
 }
 
 FSA FSA::unionExpression(const FSA &left, const FSA &right)
