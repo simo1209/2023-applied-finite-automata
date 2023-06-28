@@ -127,4 +127,5 @@ void FSA::unionWith(const FSA &other){
     finalState = newFinalState;
 
     copyTransitionsWithOffset(nextState, other);
+    nextState = newFinalState + 1;
 }
