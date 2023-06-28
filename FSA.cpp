@@ -2,6 +2,7 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <queue>
 
 class FSA
 {
@@ -13,7 +14,8 @@ private:
     size_t nextState;
     void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
     void unionWith(const FSA &other);
-    // void concatenateWith(const FSA &other);
+    void concatenateWith(const FSA &other);
+
 public:
     FSA();
     FSA(char symbol);
@@ -119,11 +121,8 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 
 FSA FSA::unionExpression(const FSA &left, const FSA &right)
 {
-    FSA resultFSA;
-    resultFSA.initialState = left.initialState;
-    resultFSA.finalState = left.finalState;
-    resultFSA.nextState = left.nextState;
-    resultFSA.copyTransitionsWithOffset(0, left);
+    FSA resultFSA(left);
+    std::cerr << "rfa ns " << resultFSA.nextState << std::endl;
 
     resultFSA.unionWith(right);
     return resultFSA;
@@ -137,19 +136,26 @@ FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
     return resultFSA;
 }
 
-void FSA::unionWith(const FSA &other){
-    size_t newInitialState = other.finalState + nextState + 1;
-    size_t newFinalState = other.finalState + nextState + 2;
+void FSA::unionWith(const FSA &other)
+{
+    std::cerr << "newInitialState " << nextState << std::endl;
+
+    size_t newInitialState = nextState++;
 
     transitions[newInitialState]['\0'].push_back(initialState);
-    transitions[newInitialState]['\0'].push_back(other.initialState + nextState);
+    transitions[newInitialState]['\0'].push_back(nextState);
     initialState = newInitialState;
 
-    transitions[finalState]['\0'].push_back(newFinalState);   
-    transitions[other.finalState + nextState]['\0'].push_back(newFinalState); 
-    finalState = newFinalState;
-
     copyTransitionsWithOffset(nextState, other);
+    std::cerr << "other" << other.finalState << '\n';
+    std::cerr << "nextState= " << nextState << std::endl;
+
+    transitions[finalState]['\0'].push_back(nextState);
+    transitions[nextState - 1]['\0'].push_back(nextState);
+
+    finalState = nextState++;
+}
+
 void FSA::concatenateWith(const FSA &other)
 {
     std::cerr << "concatenating with " << other.initialState << ' ' << other.finalState << std::endl;
