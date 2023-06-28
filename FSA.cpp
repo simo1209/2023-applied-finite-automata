@@ -11,8 +11,9 @@ private:
     std::map<size_t, std::map<char, std::vector<size_t>>> transitions;
 
     size_t nextState;
-    
+
 public:
+    FSA();
     FSA(char symbol);
     ~FSA();
 
@@ -23,7 +24,11 @@ public:
     static FSA concatenationExpression(const FSA &left, const FSA &right);
 };
 
-FSA::FSA(char symbol = '\0') : initialState(0), nextState(0)
+FSA::FSA()
+{
+}
+
+FSA::FSA(char symbol) : initialState(0), nextState(0)
 {
     size_t currentState = nextState++;
     transitions[currentState][symbol].push_back(nextState);
@@ -79,16 +84,15 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 FSA FSA::unionExpression(const FSA &left, const FSA &right)
 {
     FSA resultFSA;
-    resultFSA.transitions.erase(0);
     resultFSA.nextState = 1;
 
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
 
     resultFSA.transitions[0]['\0'].push_back(resultFSA.nextState);
     size_t leftOffset = resultFSA.nextState;
     resultFSA.copyTransitionsWithOffset(resultFSA.nextState, left);
 
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
 
     resultFSA.transitions[0]['\0'].push_back(resultFSA.nextState);
     size_t rightOffset = resultFSA.nextState;
@@ -104,18 +108,17 @@ FSA FSA::unionExpression(const FSA &left, const FSA &right)
 FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
 {
     FSA resultFSA;
-    resultFSA.transitions.erase(0);
     resultFSA.nextState = 0;
 
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
     resultFSA.copyTransitionsWithOffset(resultFSA.nextState, left);
     resultFSA.nextState--;
 
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n'; 
+    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
     resultFSA.copyTransitionsWithOffset(resultFSA.nextState, right);
     resultFSA.nextState--;
 
     resultFSA.finalState = resultFSA.nextState++;
-    
+
     return resultFSA;
 }
