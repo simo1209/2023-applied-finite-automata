@@ -6,6 +6,7 @@
 class FSA
 {
 private:
+    size_t initialState;
     size_t finalState;
     std::map<size_t, std::map<char, std::vector<size_t>>> transitions;
 
@@ -18,7 +19,7 @@ public:
     void print();
 };
 
-FSA::FSA(char symbol = '\0') : nextState(0)
+FSA::FSA(char symbol = '\0') : nextState(0), initialState(0)
 {
     size_t currentState = nextState++;
     transitions[currentState][symbol].push_back(nextState);
