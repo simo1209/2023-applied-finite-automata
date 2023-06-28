@@ -131,19 +131,9 @@ FSA FSA::unionExpression(const FSA &left, const FSA &right)
 
 FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
 {
-    FSA resultFSA;
-    resultFSA.nextState = 0;
+    FSA resultFSA(left);
 
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
-    resultFSA.copyTransitionsWithOffset(resultFSA.nextState, left);
-    resultFSA.nextState--;
-
-    std::cerr << "resultFSA nextState = " << resultFSA.nextState << '\n';
-    resultFSA.copyTransitionsWithOffset(resultFSA.nextState, right);
-    resultFSA.nextState--;
-
-    resultFSA.finalState = resultFSA.nextState++;
-
+    resultFSA.concatenateWith(right);
     return resultFSA;
 }
 
@@ -160,5 +150,11 @@ void FSA::unionWith(const FSA &other){
     finalState = newFinalState;
 
     copyTransitionsWithOffset(nextState, other);
-    nextState = newFinalState + 1;
+void FSA::concatenateWith(const FSA &other)
+{
+    std::cerr << "concatenating with " << other.initialState << ' ' << other.finalState << std::endl;
+
+    copyTransitionsWithOffset(finalState, other);
+    finalState = finalState + other.finalState;
+    nextState = finalState + 1;
 }
