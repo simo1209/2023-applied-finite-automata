@@ -17,6 +17,7 @@ private:
 public:
     FSA();
     FSA(char symbol);
+    FSA(const FSA &other);
     ~FSA();
 
     void print();
@@ -34,6 +35,11 @@ FSA::FSA(char symbol) : initialState(0), nextState(0)
     size_t currentState = nextState++;
     transitions[currentState][symbol].push_back(nextState);
     finalState = nextState++;
+}
+
+FSA::FSA(const FSA &other) : initialState(other.initialState), finalState(other.finalState), nextState(other.nextState)
+{
+    copyTransitionsWithOffset(0, other);
 }
 
 FSA::~FSA()
