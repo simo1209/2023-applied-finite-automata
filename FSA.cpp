@@ -32,23 +32,23 @@ FSA::~FSA()
 void FSA::print()
 {
     std::cout << "flowchart LR\n";
-    for (const auto &[q, ars] : transitions)
+    for (const auto &[fromState, symbolToStates] : transitions)
     {
-        for (const auto &[a, rs] : ars)
+        for (const auto &[symbol, toStates] : symbolToStates)
         {
-            for(const auto &r : rs)
+            for (const auto &toState : toStates)
             {
-                if (a == '\0')
+                if (symbol == '\0')
                 {
-                    std::cout << "\t" << q << "-- ε -->" << r << "\n";
+                    std::cout << "\t" << fromState << "-- ε -->" << toState << "\n";
                 }
                 else
                 {
-                    std::cout << "\t" << q << "-- " << a << " -->" << r << "\n";
+                    std::cout << "\t" << fromState << "-- " << symbol << " -->" << toState << "\n";
                 }
             }
         }
-        std::cout << "\t" << q << "((" << q << "))\n";
+        std::cout << "\t" << fromState << "((" << fromState << "))\n";
     }
     std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
 }
