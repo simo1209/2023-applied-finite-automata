@@ -24,7 +24,7 @@ public:
     static FSA concatenationExpression(const FSA &left, const FSA &right);
 };
 
-FSA::FSA() : initialState(0), finalState(1), nextState(0)
+FSA::FSA() : initialState(0), finalState(1), nextState(1)
 {
 }
 
@@ -58,15 +58,13 @@ void FSA::print()
                 }
             }
         }
-        if (fromState != finalState)
+        if (fromState != finalState && fromState != initialState)
         {
             std::cout << "\t" << fromState << "((" << fromState << "))\n";
         }
     }
-    if (transitions.find(initialState) == transitions.end())
-    {
-        std::cout << "\t" << initialState << "((" << initialState << "))\n";
-    }
+    // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
+    std::cout << "\t" << initialState << "((" << initialState << "))\n";
     std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
 }
 
