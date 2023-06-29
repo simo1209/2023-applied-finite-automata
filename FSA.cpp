@@ -4,10 +4,11 @@
 #include <vector>
 #include <queue>
 #include <stack>
+#include <set>
 
 constexpr char EPSILON = '\0';
 
-class FSA
+class NDA
 {
 private:
     size_t initialState;
@@ -17,49 +18,51 @@ private:
     static bool isSpecial(char ch);
     static bool isOperator(char ch);
     static int precedence(char op);
-    static void process_operator(std::stack<FSA*> &automatas, char op);
+    static void process_operator(std::stack<NDA *> &automatas, char op);
 
     size_t nextState;
-    void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom, std::unordered_map<size_t, size_t> &visited);
-    void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
+    void copyTransitionsWithOffset(size_t offset, const NDA &copyFrom, std::unordered_map<size_t, size_t> &visited);
+    void copyTransitionsWithOffset(size_t offset, const NDA &copyFrom);
 
-    void unionWith(const FSA &other);
-    void concatenateWith(const FSA &other);
+    void unionWith(const NDA &other);
+    void concatenateWith(const NDA &other);
     void kleene();
 
 public:
-    FSA();
-    FSA(char symbol);
-    FSA(const FSA &other);
-    ~FSA();
+    NDA();
+    NDA(char symbol);
+    NDA(const NDA &other);
+    ~NDA();
 
     void print() const;
 
-    static FSA *parseExpression(const std::string &expression);
+    static NDA *parseExpression(const std::string &expression);
+
+    friend class DFA;
 };
 
-FSA::FSA() : initialState(0), finalState(1), nextState(1)
+NDA::NDA() : initialState(0), finalState(1), nextState(1)
 {
 }
 
-FSA::FSA(char symbol) : initialState(0), nextState(0)
+NDA::NDA(char symbol) : initialState(0), nextState(0)
 {
     size_t currentState = nextState++;
     transitions[currentState][symbol].push_back(nextState);
     finalState = nextState++;
 }
 
-FSA::FSA(const FSA &other) : initialState(other.initialState), finalState(other.finalState), nextState(other.nextState)
+NDA::NDA(const NDA &other) : initialState(other.initialState), finalState(other.finalState), nextState(other.nextState)
 {
     copyTransitionsWithOffset(0, other);
 }
 
-FSA::~FSA()
+NDA::~NDA()
 {
     std::cerr << "destroying " << initialState << " " << finalState << '\n';
 }
 
-void FSA::print() const
+void NDA::print() const
 {
     std::cout << "flowchart LR\n";
     for (const auto &[fromState, symbolToStates] : transitions)
@@ -88,25 +91,25 @@ void FSA::print() const
     std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
 }
 
-void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
+void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other)
 {
     std::unordered_map<size_t, size_t> visited;
     copyTransitionsWithOffset(offset, other, visited);
 }
 
-void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unordered_map<size_t, size_t> &visited)
+void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unordered_map<size_t, size_t> &visited)
 {
-    std::queue<std::pair<size_t, size_t>> fsaQueue;
+    std::queue<std::pair<size_t, size_t>> NDAQueue;
 
     visited[other.initialState] = offset;
-    fsaQueue.push(std::make_pair(other.initialState, offset));
+    NDAQueue.push(std::make_pair(other.initialState, offset));
 
-    while (!fsaQueue.empty())
+    while (!NDAQueue.empty())
     {
-        auto &[currentOtherState, currentState] = fsaQueue.front();
+        auto &[currentOtherState, currentState] = NDAQueue.front();
         std::cerr << "visiting " << currentOtherState << std::endl;
         std::cerr << "offset = " << currentState << std::endl;
-        fsaQueue.pop();
+        NDAQueue.pop();
 
         if (other.transitions.find(currentOtherState) != other.transitions.end())
         {
@@ -115,7 +118,8 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unorde
                 for (const auto &toState : toStates)
                 {
                     offset++;
-                    while ( transitions.find(offset) != transitions.end() || offset == finalState || offset == initialState ){
+                    while (transitions.find(offset) != transitions.end() || offset == finalState || offset == initialState)
+                    {
                         offset++;
                     }
                     std::cerr << "setting transition " << currentState << '(' << currentOtherState << ')' << ' ' << symbol << ' ' << offset << '(' << toState << ')' << std::endl;
@@ -124,13 +128,13 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unorde
                     {
                         std::cerr << toState << " already vsited. reusing " << visited[toState] << std::endl;
                         transitions[currentState][symbol].push_back(visited[toState]);
-                        // fsaQueue.push(std::make_pair(toState, visited[toState]));
+                        // NDAQueue.push(std::make_pair(toState, visited[toState]));
                     }
                     else
                     {
                         transitions[currentState][symbol].push_back(offset);
                         visited[toState] = offset;
-                        fsaQueue.push(std::make_pair(toState, offset));
+                        NDAQueue.push(std::make_pair(toState, offset));
                     }
                 }
             }
@@ -140,17 +144,17 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unorde
     nextState = offset + 1;
 }
 
-bool FSA::isOperator(char ch)
+bool NDA::isOperator(char ch)
 {
     return ch == '*' || ch == '&' || ch == '|' || ch == '^';
 }
 
-bool FSA::isSpecial(char ch)
+bool NDA::isSpecial(char ch)
 {
     return isOperator(ch) || ch == '(' || ch == ')';
 }
 
-int FSA::precedence(char op)
+int NDA::precedence(char op)
 {
     switch (op)
     {
@@ -166,9 +170,9 @@ int FSA::precedence(char op)
     }
 }
 
-void FSA::process_operator(std::stack<FSA *> &automatas, char op)
+void NDA::process_operator(std::stack<NDA *> &automatas, char op)
 {
-    FSA *a = automatas.top();
+    NDA *a = automatas.top();
     automatas.pop();
 
     if (op == '*')
@@ -178,7 +182,7 @@ void FSA::process_operator(std::stack<FSA *> &automatas, char op)
     }
     else
     {
-        FSA *b = automatas.top();
+        NDA *b = automatas.top();
         automatas.pop();
         switch (op)
         {
@@ -197,13 +201,13 @@ void FSA::process_operator(std::stack<FSA *> &automatas, char op)
     }
 }
 
-FSA *FSA::parseExpression(const std::string &expression)
+NDA *NDA::parseExpression(const std::string &expression)
 {
-    std::stack<FSA*> automatas;
+    std::stack<NDA *> automatas;
     std::stack<char> operators;
 
     bool expect_operator = false;
-    
+
     for (char ch : expression)
     {
         if (isspace(ch))
@@ -235,9 +239,10 @@ FSA *FSA::parseExpression(const std::string &expression)
             operators.pop();
             expect_operator = true;
         }
-        else if ( ch == '*' )
+        else if (ch == '*')
         {
-            if (!expect_operator) {
+            if (!expect_operator)
+            {
                 throw std::runtime_error("Unexpected character: " + std::string(1, ch));
             }
             process_operator(automatas, ch);
@@ -263,7 +268,7 @@ FSA *FSA::parseExpression(const std::string &expression)
                 }
                 operators.push('&');
             }
-            automatas.push(new FSA(ch));
+            automatas.push(new NDA(ch));
             expect_operator = true;
         }
     }
@@ -274,16 +279,15 @@ FSA *FSA::parseExpression(const std::string &expression)
         operators.pop();
     }
     // std::cerr << "automatas left: " << automatas.size() << '\n';
-    while ( automatas.size() != 1 )
+    while (automatas.size() != 1)
     {
         process_operator(automatas, '&');
     }
 
-
     return automatas.top();
 }
 
-void FSA::unionWith(const FSA &other)
+void NDA::unionWith(const NDA &other)
 {
     std::cerr << "newInitialState " << nextState << std::endl;
 
@@ -303,7 +307,7 @@ void FSA::unionWith(const FSA &other)
     finalState = nextState++;
 }
 
-void FSA::concatenateWith(const FSA &other)
+void NDA::concatenateWith(const NDA &other)
 {
     std::cerr << "concatenating with " << other.initialState << ' ' << other.finalState << std::endl;
 
@@ -313,7 +317,7 @@ void FSA::concatenateWith(const FSA &other)
     nextState = finalState + other.nextState;
 }
 
-void FSA::kleene()
+void NDA::kleene()
 {
     transitions[finalState][EPSILON].push_back(initialState);
 
@@ -324,4 +328,166 @@ void FSA::kleene()
     finalState = nextState++;
 
     transitions[initialState][EPSILON].push_back(finalState);
+}
+
+class DFA
+{
+private:
+    std::set<size_t> initialState;
+    std::set<std::set<size_t>> finalStates;
+    std::map<std::set<size_t>, std::unordered_map<char, std::set<size_t>>> transitions;
+
+    void printStates(const std::set<size_t> &states) const;
+
+    static std::set<size_t> epsilonClosure(const size_t &state, NDA &nda);
+
+public:
+    DFA();
+    DFA(NDA &nda);
+    ~DFA();
+
+    void print();
+};
+
+DFA::DFA()
+{
+}
+
+std::set<size_t> DFA::epsilonClosure(const size_t &state, NDA &nda)
+{
+    std::set<size_t> closure = {state};
+
+    // If there are epsilon transitions from the state
+    if (nda.transitions.count(state) && nda.transitions.at(state).count('\0'))
+    {
+        for (const auto &newState : nda.transitions.at(state).at('\0'))
+        {
+            // Get the epsilon-closure of the new state
+            std::set<size_t> newClosure = epsilonClosure(newState, nda);
+
+            // Merge the new closure with the existing one
+            closure.insert(newClosure.begin(), newClosure.end());
+        }
+    }
+
+    return closure;
+}
+
+DFA::DFA(NDA &nda)
+{
+    std::queue<std::set<size_t>> toProcess;
+    std::set<std::set<size_t>> processed;
+    
+    initialState = epsilonClosure(nda.initialState, nda);
+    toProcess.push(initialState);
+
+    while (!toProcess.empty())
+    {
+        std::set<size_t> currentStates = toProcess.front();
+        toProcess.pop();
+
+        if (processed.count(currentStates))
+        {
+            continue;
+        }
+
+        processed.insert(currentStates);
+
+        // Check if the current DFA state is an accepting state.
+        if (currentStates.count(nda.finalState))
+        {
+            finalStates.insert(currentStates);
+        }
+
+        std::unordered_map<char, std::set<size_t>> toStatesByKey;
+        for (const auto &state : currentStates)
+        {
+            if (nda.transitions.count(state))
+            {
+                for (const auto &[symbol, toStates] : nda.transitions.at(state))
+                {
+                    if (symbol)
+                    {
+                        for (const auto &toState : toStates)
+                        {
+                            std::set<size_t> newClosure = epsilonClosure(toState, nda);
+                            toStatesByKey[symbol].insert(newClosure.begin(), newClosure.end());
+                        }
+                    }
+                }
+            }
+        }
+        for (const auto &[symbol, toStates] : toStatesByKey)
+        {
+            transitions[currentStates][symbol].insert(toStates.begin(), toStates.end());
+
+            if (!processed.count(toStates))
+            {
+                toProcess.push(toStates);
+            }
+        }
+    }
+}
+
+DFA::~DFA()
+{
+}
+
+void DFA::printStates(const std::set<size_t> &states) const
+{
+    for (const auto &state : states)
+    {
+        std::cout << state << ' ';
+    }
+}
+
+void DFA::print()
+{
+    std::cout << "flowchart LR\n";
+
+    size_t indexCounter = 0;
+    std::map<std::set<size_t>, size_t> statesIndecies;
+
+    for (const auto &[fromStates, symbolToStates] : transitions)
+    {
+        if (statesIndecies.find(fromStates) == statesIndecies.end())
+        {
+            statesIndecies[fromStates] = indexCounter++;
+        }
+
+        for (const auto &[symbol, toStates] : symbolToStates)
+        {
+            if (statesIndecies.find(toStates) == statesIndecies.end())
+            {
+                statesIndecies[toStates] = indexCounter++;
+            }
+
+            // for (const auto &toState : toStates)
+            // {
+            if (symbol == EPSILON)
+            {
+                std::cout << "\t" << statesIndecies[fromStates] << "-- ε -->" << statesIndecies[toStates] << "\n";
+            }
+            else
+            {
+                std::cout << "\t" << statesIndecies[fromStates] << "-- " << symbol << " -->" << statesIndecies[toStates] << "\n";
+            }
+            // }
+        }
+        if (finalStates.count(fromStates) == 0 && fromStates != initialState)
+        {
+            std::cout << "\t" << statesIndecies[fromStates] << "((" << statesIndecies[fromStates] << "))\n";
+        }
+    }
+    // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
+    std::cout << "\t" << statesIndecies[initialState] << "((";
+    printStates(initialState);
+    std::cout << " init))\n";
+
+    for (const auto &finalState : finalStates)
+    {
+        std::cout << "\t" << statesIndecies[finalState] << "(((";
+        printStates(finalState);
+        std::cout << ")))\n";
+    }
 }

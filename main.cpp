@@ -1,22 +1,30 @@
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <stack>
+#include <map>
 
 #include "FSA.cpp"
 
-int main() {
+int main(int argc, char *argv[]) {
 
-    FSA emptyWord;
+    if ( argc < 2 )
+    {
+        std::cerr << "Not enough arguments" << '\n';
+        return 1;
+    }
 
-    FSA singletonA('a');
-    // singletonA.print();
+    std::string testExpression{argv[1]};
 
-    FSA singletonB('b');
-    // singletonB.print();
+    std::cerr << "testing with: " << testExpression << '\n';
 
-    FSA ab = FSA::unionExpression(singletonA, singletonB);
-    // ab.print();
+    NDA *test = NDA::parseExpression(testExpression);
+    // test->print();
 
-    FSA aab = FSA::concatenationExpression(singletonA, ab);
-    aab.print();
+    DFA *dTest = new DFA(*test);
+    dTest->print();
+    delete test;
+    delete dTest;
 
     return 0;
 }
