@@ -1,8 +1,9 @@
-#include <map>
+#include <unordered_map>
 #include <string>
 #include <iostream>
 #include <vector>
 #include <queue>
+#include <stack>
 
 constexpr char EPSILON = '\0';
 
@@ -11,10 +12,17 @@ class FSA
 private:
     size_t initialState;
     size_t finalState;
-    std::map<size_t, std::map<char, std::vector<size_t>>> transitions;
+    std::unordered_map<size_t, std::unordered_map<char, std::vector<size_t>>> transitions;
+
+    static bool isSpecial(char ch);
+    static bool isOperator(char ch);
+    static int precedence(char op);
+    static void process_operator(std::stack<FSA*> &automatas, char op);
 
     size_t nextState;
+    void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom, std::unordered_map<size_t, size_t> &visited);
     void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
+
     void unionWith(const FSA &other);
     void concatenateWith(const FSA &other);
     void kleene();
@@ -25,11 +33,9 @@ public:
     FSA(const FSA &other);
     ~FSA();
 
-    void print();
+    void print() const;
 
-    static FSA unionExpression(const FSA &left, const FSA &right);
-    static FSA concatenationExpression(const FSA &left, const FSA &right);
-    static FSA kleeneExpression(const FSA &left);
+    static FSA *parseExpression(const std::string &expression);
 };
 
 FSA::FSA() : initialState(0), finalState(1), nextState(1)
@@ -50,9 +56,10 @@ FSA::FSA(const FSA &other) : initialState(other.initialState), finalState(other.
 
 FSA::~FSA()
 {
+    std::cerr << "destroying " << initialState << " " << finalState << '\n';
 }
 
-void FSA::print()
+void FSA::print() const
 {
     std::cout << "flowchart LR\n";
     for (const auto &[fromState, symbolToStates] : transitions)
@@ -83,7 +90,12 @@ void FSA::print()
 
 void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 {
-    std::map<size_t, size_t> visited;
+    std::unordered_map<size_t, size_t> visited;
+    copyTransitionsWithOffset(offset, other, visited);
+}
+
+void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unordered_map<size_t, size_t> &visited)
+{
     std::queue<std::pair<size_t, size_t>> fsaQueue;
 
     visited[other.initialState] = offset;
@@ -102,7 +114,12 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
             {
                 for (const auto &toState : toStates)
                 {
-                    std::cerr << "setting transition " << currentState << ' ' << symbol << ' ' << ++offset << std::endl;
+                    offset++;
+                    while ( transitions.find(offset) != transitions.end() || offset == finalState || offset == initialState ){
+                        offset++;
+                    }
+                    std::cerr << "setting transition " << currentState << '(' << currentOtherState << ')' << ' ' << symbol << ' ' << offset << '(' << toState << ')' << std::endl;
+
                     if (visited.find(toState) != visited.end())
                     {
                         std::cerr << toState << " already vsited. reusing " << visited[toState] << std::endl;
@@ -123,37 +140,147 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
     nextState = offset + 1;
 }
 
-FSA FSA::unionExpression(const FSA &left, const FSA &right)
+bool FSA::isOperator(char ch)
 {
-    FSA resultFSA(left);
-    std::cerr << "rfa ns " << resultFSA.nextState << std::endl;
-
-    resultFSA.unionWith(right);
-    return resultFSA;
+    return ch == '*' || ch == '&' || ch == '|' || ch == '^';
 }
 
-FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
+bool FSA::isSpecial(char ch)
 {
-    FSA resultFSA(left);
-
-    resultFSA.concatenateWith(right);
-    return resultFSA;
+    return isOperator(ch) || ch == '(' || ch == ')';
 }
 
-FSA FSA::kleeneExpression(const FSA &left)
+int FSA::precedence(char op)
 {
-    FSA resultFSA(left);
-
-    resultFSA.kleene();
-    return resultFSA;
+    switch (op)
+    {
+    case '*':
+        return 3;
+    case '&':
+        return 2;
+    case '|':
+    case '^':
+        return 1;
+    default:
+        return -1;
+    }
 }
 
-FSA FSA::parseExpression(const std::string &expression)
+void FSA::process_operator(std::stack<FSA *> &automatas, char op)
 {
-    FSA resultFSA;
+    FSA *a = automatas.top();
+    automatas.pop();
 
-    std::cout << expression << '\n';
-    return resultFSA;
+    if (op == '*')
+    {
+        a->kleene();
+        automatas.push(a);
+    }
+    else
+    {
+        FSA *b = automatas.top();
+        automatas.pop();
+        switch (op)
+        {
+        case '&':
+            b->concatenateWith(*a);
+            automatas.push(b);
+            break;
+        case '|':
+            b->unionWith(*a);
+            automatas.push(b);
+            break;
+        case '^':
+            break;
+        }
+        delete a;
+    }
+}
+
+FSA *FSA::parseExpression(const std::string &expression)
+{
+    std::stack<FSA*> automatas;
+    std::stack<char> operators;
+
+    bool expect_operator = false;
+    
+    for (char ch : expression)
+    {
+        if (isspace(ch))
+        {
+            continue;
+        }
+
+        if (ch == '(')
+        {
+            if (expect_operator)
+            {
+                while (!operators.empty() && precedence('&') <= precedence(operators.top()))
+                {
+                    process_operator(automatas, operators.top());
+                    operators.pop();
+                }
+                operators.push('&');
+            }
+            operators.push(ch);
+            expect_operator = false;
+        }
+        else if (ch == ')')
+        {
+            while (operators.top() != '(')
+            {
+                process_operator(automatas, operators.top());
+                operators.pop();
+            }
+            operators.pop();
+            expect_operator = true;
+        }
+        else if ( ch == '*' )
+        {
+            if (!expect_operator) {
+                throw std::runtime_error("Unexpected character: " + std::string(1, ch));
+            }
+            process_operator(automatas, ch);
+        }
+        else if (isOperator(ch))
+        {
+            while (!operators.empty() && precedence(ch) <= precedence(operators.top()))
+            {
+                process_operator(automatas, operators.top());
+                operators.pop();
+            }
+            operators.push(ch);
+            expect_operator = false;
+        }
+        else
+        {
+            if (expect_operator)
+            {
+                while (!operators.empty() && precedence('&') <= precedence(operators.top()))
+                {
+                    process_operator(automatas, operators.top());
+                    operators.pop();
+                }
+                operators.push('&');
+            }
+            automatas.push(new FSA(ch));
+            expect_operator = true;
+        }
+    }
+
+    while (!operators.empty())
+    {
+        process_operator(automatas, operators.top());
+        operators.pop();
+    }
+    // std::cerr << "automatas left: " << automatas.size() << '\n';
+    while ( automatas.size() != 1 )
+    {
+        process_operator(automatas, '&');
+    }
+
+
+    return automatas.top();
 }
 
 void FSA::unionWith(const FSA &other)
@@ -180,9 +307,10 @@ void FSA::concatenateWith(const FSA &other)
 {
     std::cerr << "concatenating with " << other.initialState << ' ' << other.finalState << std::endl;
 
-    copyTransitionsWithOffset(finalState, other);
-    finalState = finalState + other.finalState;
-    nextState = finalState + 1;
+    std::unordered_map<size_t, size_t> visited;
+    copyTransitionsWithOffset(finalState, other, visited);
+    finalState = visited[other.finalState];
+    nextState = finalState + other.nextState;
 }
 
 void FSA::kleene()
