@@ -17,6 +17,7 @@ private:
     void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
     void unionWith(const FSA &other);
     void concatenateWith(const FSA &other);
+    void kleene();
 
 public:
     FSA();
@@ -28,6 +29,7 @@ public:
 
     static FSA unionExpression(const FSA &left, const FSA &right);
     static FSA concatenationExpression(const FSA &left, const FSA &right);
+    static FSA kleeneExpression(const FSA &left);
 };
 
 FSA::FSA() : initialState(0), finalState(1), nextState(1)
@@ -75,7 +77,7 @@ void FSA::print()
         }
     }
     // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
-    std::cout << "\t" << initialState << "((" << initialState << "))\n";
+    std::cout << "\t" << initialState << "((" << initialState << " init))\n";
     std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
 }
 
@@ -105,7 +107,7 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
                     {
                         std::cerr << toState << " already vsited. reusing " << visited[toState] << std::endl;
                         transitions[currentState][symbol].push_back(visited[toState]);
-                        fsaQueue.push(std::make_pair(toState, visited[toState]));
+                        // fsaQueue.push(std::make_pair(toState, visited[toState]));
                     }
                     else
                     {
@@ -138,6 +140,22 @@ FSA FSA::concatenationExpression(const FSA &left, const FSA &right)
     return resultFSA;
 }
 
+FSA FSA::kleeneExpression(const FSA &left)
+{
+    FSA resultFSA(left);
+
+    resultFSA.kleene();
+    return resultFSA;
+}
+
+FSA FSA::parseExpression(const std::string &expression)
+{
+    FSA resultFSA;
+
+    std::cout << expression << '\n';
+    return resultFSA;
+}
+
 void FSA::unionWith(const FSA &other)
 {
     std::cerr << "newInitialState " << nextState << std::endl;
@@ -165,4 +183,17 @@ void FSA::concatenateWith(const FSA &other)
     copyTransitionsWithOffset(finalState, other);
     finalState = finalState + other.finalState;
     nextState = finalState + 1;
+}
+
+void FSA::kleene()
+{
+    transitions[finalState][EPSILON].push_back(initialState);
+
+    transitions[nextState][EPSILON].push_back(initialState);
+    initialState = nextState++;
+
+    transitions[finalState][EPSILON].push_back(nextState);
+    finalState = nextState++;
+
+    transitions[initialState][EPSILON].push_back(finalState);
 }
