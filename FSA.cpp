@@ -4,6 +4,8 @@
 #include <vector>
 #include <queue>
 
+constexpr char EPSILON = '\0';
+
 class FSA
 {
 private:
@@ -57,7 +59,7 @@ void FSA::print()
         {
             for (const auto &toState : toStates)
             {
-                if (symbol == '\0')
+                if (symbol == EPSILON)
                 {
                     std::cout << "\t" << fromState << "-- ε -->" << toState << "\n";
                 }
@@ -142,16 +144,16 @@ void FSA::unionWith(const FSA &other)
 
     size_t newInitialState = nextState++;
 
-    transitions[newInitialState]['\0'].push_back(initialState);
-    transitions[newInitialState]['\0'].push_back(nextState);
+    transitions[newInitialState][EPSILON].push_back(initialState);
+    transitions[newInitialState][EPSILON].push_back(nextState);
     initialState = newInitialState;
 
     copyTransitionsWithOffset(nextState, other);
     std::cerr << "other" << other.finalState << '\n';
     std::cerr << "nextState= " << nextState << std::endl;
 
-    transitions[finalState]['\0'].push_back(nextState);
-    transitions[nextState - 1]['\0'].push_back(nextState);
+    transitions[finalState][EPSILON].push_back(nextState);
+    transitions[nextState - 1][EPSILON].push_back(nextState);
 
     finalState = nextState++;
 }
