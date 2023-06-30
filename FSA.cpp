@@ -59,7 +59,6 @@ NDA::NDA(const NDA &other) : initialState(other.initialState), finalState(other.
 
 NDA::~NDA()
 {
-    std::cerr << "destroying " << initialState << " " << finalState << '\n';
 }
 
 void NDA::print() const
@@ -107,8 +106,6 @@ void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unorde
     while (!NDAQueue.empty())
     {
         auto &[currentOtherState, currentState] = NDAQueue.front();
-        std::cerr << "visiting " << currentOtherState << std::endl;
-        std::cerr << "offset = " << currentState << std::endl;
         NDAQueue.pop();
 
         if (other.transitions.find(currentOtherState) != other.transitions.end())
@@ -122,11 +119,9 @@ void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unorde
                     {
                         offset++;
                     }
-                    std::cerr << "setting transition " << currentState << '(' << currentOtherState << ')' << ' ' << symbol << ' ' << offset << '(' << toState << ')' << std::endl;
 
                     if (visited.find(toState) != visited.end())
                     {
-                        std::cerr << toState << " already vsited. reusing " << visited[toState] << std::endl;
                         transitions[currentState][symbol].push_back(visited[toState]);
                         // NDAQueue.push(std::make_pair(toState, visited[toState]));
                     }
@@ -278,7 +273,7 @@ NDA *NDA::parseExpression(const std::string &expression)
         process_operator(automatas, operators.top());
         operators.pop();
     }
-    // std::cerr << "automatas left: " << automatas.size() << '\n';
+
     while (automatas.size() != 1)
     {
         process_operator(automatas, '&');
@@ -289,8 +284,6 @@ NDA *NDA::parseExpression(const std::string &expression)
 
 void NDA::unionWith(const NDA &other)
 {
-    std::cerr << "newInitialState " << nextState << std::endl;
-
     size_t newInitialState = nextState++;
 
     transitions[newInitialState][EPSILON].push_back(initialState);
@@ -298,8 +291,6 @@ void NDA::unionWith(const NDA &other)
     initialState = newInitialState;
 
     copyTransitionsWithOffset(nextState, other);
-    std::cerr << "other" << other.finalState << '\n';
-    std::cerr << "nextState= " << nextState << std::endl;
 
     transitions[finalState][EPSILON].push_back(nextState);
     transitions[nextState - 1][EPSILON].push_back(nextState);
@@ -309,8 +300,6 @@ void NDA::unionWith(const NDA &other)
 
 void NDA::concatenateWith(const NDA &other)
 {
-    std::cerr << "concatenating with " << other.initialState << ' ' << other.finalState << std::endl;
-
     std::unordered_map<size_t, size_t> visited;
     copyTransitionsWithOffset(finalState, other, visited);
     finalState = visited[other.finalState];
@@ -347,6 +336,9 @@ public:
     ~DFA();
 
     void print();
+    std::set<std::set<std::set<size_t>>> hopcroftPartitions();
+
+    friend class MinimizedDFA;
 };
 
 DFA::DFA()
@@ -377,7 +369,7 @@ DFA::DFA(NDA &nda)
 {
     std::queue<std::set<size_t>> toProcess;
     std::set<std::set<size_t>> processed;
-    
+
     initialState = epsilonClosure(nda.initialState, nda);
     toProcess.push(initialState);
 
@@ -489,5 +481,148 @@ void DFA::print()
         std::cout << "\t" << statesIndecies[finalState] << "(((";
         printStates(finalState);
         std::cout << ")))\n";
+    }
+}
+
+std::set<std::set<std::set<size_t>>> DFA::hopcroftPartitions()
+{
+    std::queue<std::set<std::set<size_t>>> pending;
+    std::set<std::set<std::set<size_t>>> partition;
+
+    // Step 1: Partition the states into two sets
+    std::set<std::set<size_t>> nonFinalStates, finalStates;
+
+    for (auto &state : transitions)
+    {
+        if (finalStates.count(state.first))
+        {
+            finalStates.insert(state.first);
+        }
+        else
+        {
+            nonFinalStates.insert(state.first);
+        }
+    }
+
+    partition.insert(finalStates);
+    partition.insert(nonFinalStates);
+
+    pending.push(finalStates);
+    pending.push(nonFinalStates);
+
+    // Step 3: While the queue is not empty
+    while (!pending.empty())
+    {
+        std::set<std::set<size_t>> A = pending.front();
+        pending.pop();
+
+        for (char symbol = 'a'; symbol <= 'z'; ++symbol)
+        {
+            std::set<std::set<std::set<size_t>>> newPartition;
+
+            for (auto &B : partition)
+            {
+                std::set<std::set<size_t>> B1, B2;
+
+                for (auto &state : B)
+                {
+                    std::set<size_t> nextState = transitions[state][symbol];
+                    if (A.count(nextState))
+                    {
+                        B1.insert(state);
+                    }
+                    else
+                    {
+                        B2.insert(state);
+                    }
+                }
+
+                if (!B1.empty())
+                {
+                    newPartition.insert(B1);
+                }
+
+                if (!B2.empty())
+                {
+                    newPartition.insert(B2);
+                }
+            }
+
+            partition = newPartition;
+        }
+    }
+
+    return partition;
+}
+
+class MinimizedDFA
+{
+private:
+    size_t initialState;
+    std::set<size_t> finalStates;
+    std::unordered_map<size_t, std::unordered_map<char, size_t>> transitions;
+
+public:
+    MinimizedDFA(){};
+    MinimizedDFA(DFA &dfa);
+    ~MinimizedDFA(){};
+
+    void print();
+};
+
+MinimizedDFA::MinimizedDFA(DFA &dfa)
+{
+    std::set<std::set<std::set<size_t>>> partition = dfa.hopcroftPartitions();
+
+    size_t minimizedStateCounter = 0;
+    std::map<std::set<size_t>, size_t> equivalenceClasses;
+    for (auto &equivalenceClass : partition)
+    {
+        for (auto &state : equivalenceClass)
+        {
+            equivalenceClasses[state] = minimizedStateCounter;
+        }
+        minimizedStateCounter++;
+    }
+
+    for (auto &equivalenceClass : partition)
+    {
+        for (auto &state : equivalenceClass)
+        {
+            for (auto &[symbol, toStates] : dfa.transitions[state])
+            {
+                if (toStates.size())
+                {
+                    transitions[equivalenceClasses[state]][symbol] = equivalenceClasses[toStates];
+                }
+            }
+        }
+    }
+    initialState = equivalenceClasses[dfa.initialState];
+    for (auto &dfaFinalState : dfa.finalStates)
+    {
+        finalStates.insert(equivalenceClasses[dfaFinalState]);
+    }
+}
+
+void MinimizedDFA::print()
+{
+    std::cout << "flowchart LR\n";
+    for (const auto &[fromState, symbolToStates] : transitions)
+    {
+        for (const auto &[symbol, toState] : symbolToStates)
+        {
+            std::cout << "\t" << fromState << "-- " << symbol << " -->" << toState << "\n";
+        }
+        if (finalStates.count(fromState) && fromState != initialState)
+        {
+            std::cout << "\t" << fromState << "((" << fromState << "))\n";
+        }
+    }
+    // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
+    std::cout << "\t" << initialState << "((" << initialState << " init))\n";
+    for (auto &finalState : finalStates)
+    {
+        std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
     }
 }
