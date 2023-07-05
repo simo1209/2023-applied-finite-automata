@@ -5,63 +5,111 @@
 #include <queue>
 #include <stack>
 #include <set>
+#include <unordered_set>
+#include <chrono>
+#include <bitset>
+#include <algorithm>
 
 constexpr char EPSILON = '\0';
 
-class NDA
+struct StateSetHash
+{
+    std::size_t operator()(const std::unordered_set<size_t> &states) const
+    {
+        std::size_t sum = 0;
+        for (const auto &state : states)
+        {
+            sum += state * state;
+        }
+        return sum;
+    }
+};
+
+struct StateSetEqual
+{
+    bool operator()(const std::unordered_set<size_t> &lhs, const std::unordered_set<size_t> &rhs) const
+    {
+        if (lhs.size() != rhs.size())
+        {
+            return false;
+        }
+
+        for (const auto &state : lhs)
+        {
+            if (rhs.count(state) == 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+};
+
+class FSA
 {
 private:
     size_t initialState;
-    size_t finalState;
-    std::unordered_map<size_t, std::unordered_map<char, std::vector<size_t>>> transitions;
+    std::unordered_set<size_t> states;
+    std::unordered_set<size_t> finalStates;
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> transitions;
 
     static bool isSpecial(char ch);
     static bool isOperator(char ch);
     static int precedence(char op);
-    static void process_operator(std::stack<NDA *> &automatas, char op);
+    static void process_operator(std::stack<FSA *> &automatas, char op);
 
     size_t nextState;
-    void copyTransitionsWithOffset(size_t offset, const NDA &copyFrom, std::unordered_map<size_t, size_t> &visited);
-    void copyTransitionsWithOffset(size_t offset, const NDA &copyFrom);
+    void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom, std::unordered_map<size_t, size_t> &visited);
+    void copyTransitionsWithOffset(size_t offset, const FSA &copyFrom);
 
-    void unionWith(const NDA &other);
-    void concatenateWith(const NDA &other);
+    void unionWith(const FSA &other);
+    void concatenateWith(const FSA &other);
     void kleene();
+    void reverse();
+
+    void determinize();
+
+    std::unordered_set<size_t> epsilonClosure(const std::unordered_set<size_t> &startStates, std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> &epsilonCache) const;
 
 public:
-    NDA();
-    NDA(char symbol);
-    NDA(const NDA &other);
-    ~NDA();
+    FSA();
+    FSA(char symbol);
+    FSA(const FSA &other);
+    ~FSA();
 
     void print() const;
 
-    static NDA *parseExpression(const std::string &expression);
-
-    friend class DFA;
+    static FSA *parseExpression(const std::string &expression);
 };
 
-NDA::NDA() : initialState(0), finalState(1), nextState(1)
+FSA::FSA() : initialState(0), states({0, 1}), finalStates({1}), nextState(2)
 {
 }
 
-NDA::NDA(char symbol) : initialState(0), nextState(0)
+FSA::FSA(char symbol) : initialState(0), states({0, 1}), finalStates({1}), nextState(2)
 {
-    size_t currentState = nextState++;
-    transitions[currentState][symbol].push_back(nextState);
-    finalState = nextState++;
+    transitions[0][symbol].insert(1);
 }
 
-NDA::NDA(const NDA &other) : initialState(other.initialState), finalState(other.finalState), nextState(other.nextState)
+FSA::FSA(const FSA &other) : initialState(other.initialState), finalStates(other.finalStates), nextState(other.nextState)
 {
+    auto start = std::chrono::high_resolution_clock::now();
+
     copyTransitionsWithOffset(0, other);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cerr << "Copy FSA took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << '\n';
 }
 
-NDA::~NDA()
+FSA::~FSA()
 {
+    states.clear();
+    finalStates.clear();
+    transitions.clear();
 }
 
-void NDA::print() const
+void FSA::print() const
 {
     std::cout << "flowchart LR\n";
     for (const auto &[fromState, symbolToStates] : transitions)
@@ -80,33 +128,44 @@ void NDA::print() const
                 }
             }
         }
-        if (fromState != finalState && fromState != initialState)
-        {
-            std::cout << "\t" << fromState << "((" << fromState << "))\n";
-        }
     }
     // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
-    std::cout << "\t" << initialState << "((" << initialState << " init))\n";
-    std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
+    for (const auto &state : states)
+    {
+        if (finalStates.count(state))
+        {
+            std::cout << "\t" << state << "(((" << state << ")))\n";
+        }
+        else if (state == initialState)
+        {
+            std::cout << "\t" << state << "((" << state << " init))\n";
+        }
+        else
+        {
+            std::cout << "\t" << state << "((" << state << " ))\n";
+        }
+    }
 }
 
-void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other)
+void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 {
     std::unordered_map<size_t, size_t> visited;
     copyTransitionsWithOffset(offset, other, visited);
 }
 
-void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unordered_map<size_t, size_t> &visited)
+void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unordered_map<size_t, size_t> &visited)
 {
-    std::queue<std::pair<size_t, size_t>> NDAQueue;
+    auto start = std::chrono::high_resolution_clock::now();
+    std::queue<std::pair<size_t, size_t>> FSAQueue;
 
     visited[other.initialState] = offset;
-    NDAQueue.push(std::make_pair(other.initialState, offset));
+    states.insert(offset);
+    FSAQueue.push(std::make_pair(other.initialState, offset));
 
-    while (!NDAQueue.empty())
+    while (!FSAQueue.empty())
     {
-        auto &[currentOtherState, currentState] = NDAQueue.front();
-        NDAQueue.pop();
+        auto &[currentOtherState, currentState] = FSAQueue.front();
+        FSAQueue.pop();
 
         if (other.transitions.find(currentOtherState) != other.transitions.end())
         {
@@ -115,21 +174,22 @@ void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unorde
                 for (const auto &toState : toStates)
                 {
                     offset++;
-                    while (transitions.find(offset) != transitions.end() || offset == finalState || offset == initialState)
+                    while (transitions.find(offset) != transitions.end() || finalStates.count(offset) || offset == initialState)
                     {
                         offset++;
                     }
 
                     if (visited.find(toState) != visited.end())
                     {
-                        transitions[currentState][symbol].push_back(visited[toState]);
-                        // NDAQueue.push(std::make_pair(toState, visited[toState]));
+                        transitions[currentState][symbol].insert(visited[toState]);
+                        // FSAQueue.push(std::make_pair(toState, visited[toState]));
                     }
                     else
                     {
-                        transitions[currentState][symbol].push_back(offset);
+                        transitions[currentState][symbol].insert(offset);
                         visited[toState] = offset;
-                        NDAQueue.push(std::make_pair(toState, offset));
+                        states.insert(offset);
+                        FSAQueue.push(std::make_pair(toState, offset));
                     }
                 }
             }
@@ -137,37 +197,39 @@ void NDA::copyTransitionsWithOffset(size_t offset, const NDA &other, std::unorde
     }
 
     nextState = offset + 1;
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cerr << "copying transitions took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
-bool NDA::isOperator(char ch)
+bool FSA::isOperator(char ch)
 {
     return ch == '*' || ch == '&' || ch == '|' || ch == '^';
 }
 
-bool NDA::isSpecial(char ch)
+bool FSA::isSpecial(char ch)
 {
     return isOperator(ch) || ch == '(' || ch == ')';
 }
 
-int NDA::precedence(char op)
+int FSA::precedence(char op)
 {
     switch (op)
     {
     case '*':
+    case '^':
         return 3;
     case '&':
         return 2;
     case '|':
-    case '^':
         return 1;
     default:
         return -1;
     }
 }
 
-void NDA::process_operator(std::stack<NDA *> &automatas, char op)
+void FSA::process_operator(std::stack<FSA *> &automatas, char op)
 {
-    NDA *a = automatas.top();
+    FSA *a = automatas.top();
     automatas.pop();
 
     if (op == '*')
@@ -175,30 +237,38 @@ void NDA::process_operator(std::stack<NDA *> &automatas, char op)
         a->kleene();
         automatas.push(a);
     }
+    else if (op == '^')
+    {
+        a->reverse();
+        automatas.push(a);
+    }
     else
     {
-        NDA *b = automatas.top();
+        FSA *b = automatas.top();
         automatas.pop();
         switch (op)
         {
         case '&':
             b->concatenateWith(*a);
             automatas.push(b);
+            delete a;
+
             break;
         case '|':
             b->unionWith(*a);
             automatas.push(b);
+            delete a;
+
             break;
         case '^':
             break;
         }
-        delete a;
     }
 }
 
-NDA *NDA::parseExpression(const std::string &expression)
+FSA *FSA::parseExpression(const std::string &expression)
 {
-    std::stack<NDA *> automatas;
+    std::stack<FSA *> automatas;
     std::stack<char> operators;
 
     bool expect_operator = false;
@@ -234,7 +304,7 @@ NDA *NDA::parseExpression(const std::string &expression)
             operators.pop();
             expect_operator = true;
         }
-        else if (ch == '*')
+        else if (ch == '*' || ch == '^')
         {
             if (!expect_operator)
             {
@@ -263,7 +333,7 @@ NDA *NDA::parseExpression(const std::string &expression)
                 }
                 operators.push('&');
             }
-            automatas.push(new NDA(ch));
+            automatas.push(new FSA(ch));
             expect_operator = true;
         }
     }
@@ -279,350 +349,295 @@ NDA *NDA::parseExpression(const std::string &expression)
         process_operator(automatas, '&');
     }
 
+    automatas.top()->determinize();
     return automatas.top();
 }
 
-void NDA::unionWith(const NDA &other)
+/*
+bool FSA::accepts(const std::string &word)
 {
-    size_t newInitialState = nextState++;
+    std::queue<std::pair<size_t, size_t>> nextStates;
 
-    transitions[newInitialState][EPSILON].push_back(initialState);
-    transitions[newInitialState][EPSILON].push_back(nextState);
+    size_t wordCursor = 0;
+    size_t wordSize = word.size();
+
+    if (transitions[initialState].count('\0'))
+    {
+        for (const &toState : transitions[initialState]['\0'])
+        {
+            nextStates.push(std::make_pair(toState, initialState));
+        }
+    }
+
+    while (wordCursor < wordSize && !nextStates.empty())
+    {
+        auto &[currentState, previousState] = nextStates.front();
+        nextStates.pop();
+
+        if (transitions[currentState].count('\0'))
+        {
+            for (const &toState : transitions[currentState]['\0'])
+            {
+                if (toState != previousState)
+                {
+                    nextStates.push(std::make_pair(toState, currentState));
+                }
+            }
+        }
+        if (transitions[currentState].count(word[wordCursor]))
+        {
+            for (const &toState : transitions[currentState][word[wordCursor]])
+            {
+                nextStates.push(std::make_pair(toState, currentState));
+            }
+        }
+    }
+
+    bool containsFinal = false;
+    while (!nextStates.empty())
+    {
+        auto &[currentState, previousState] = nextStates.front();
+        nextStates.pop();
+
+        if ( previousState == finalState )
+        {
+            containsFinal = true;
+            break;
+        }
+    }
+
+    return wordCursor >= wordSize && containsFinal;
+}
+*/
+void FSA::unionWith(const FSA &other)
+{
+    auto start = std::chrono::high_resolution_clock::now();
+    size_t newInitialState = nextState++;
+    states.insert(newInitialState);
+
+    transitions[newInitialState][EPSILON].insert(initialState);
+    transitions[newInitialState][EPSILON].insert(nextState);
     initialState = newInitialState;
 
     copyTransitionsWithOffset(nextState, other);
 
-    transitions[finalState][EPSILON].push_back(nextState);
-    transitions[nextState - 1][EPSILON].push_back(nextState);
-
-    finalState = nextState++;
-}
-
-void NDA::concatenateWith(const NDA &other)
-{
-    std::unordered_map<size_t, size_t> visited;
-    copyTransitionsWithOffset(finalState, other, visited);
-    finalState = visited[other.finalState];
-    nextState = finalState + other.nextState;
-}
-
-void NDA::kleene()
-{
-    transitions[finalState][EPSILON].push_back(initialState);
-
-    transitions[nextState][EPSILON].push_back(initialState);
-    initialState = nextState++;
-
-    transitions[finalState][EPSILON].push_back(nextState);
-    finalState = nextState++;
-
-    transitions[initialState][EPSILON].push_back(finalState);
-}
-
-class DFA
-{
-private:
-    std::set<size_t> initialState;
-    std::set<std::set<size_t>> finalStates;
-    std::map<std::set<size_t>, std::unordered_map<char, std::set<size_t>>> transitions;
-
-    void printStates(const std::set<size_t> &states) const;
-
-    static std::set<size_t> epsilonClosure(const size_t &state, NDA &nda);
-
-public:
-    DFA();
-    DFA(NDA &nda);
-    ~DFA();
-
-    void print();
-    std::set<std::set<std::set<size_t>>> hopcroftPartitions();
-
-    friend class MinimizedDFA;
-};
-
-DFA::DFA()
-{
-}
-
-std::set<size_t> DFA::epsilonClosure(const size_t &state, NDA &nda)
-{
-    std::set<size_t> closure = {state};
-
-    // If there are epsilon transitions from the state
-    if (nda.transitions.count(state) && nda.transitions.at(state).count('\0'))
+    if (finalStates.size() != 1)
     {
-        for (const auto &newState : nda.transitions.at(state).at('\0'))
-        {
-            // Get the epsilon-closure of the new state
-            std::set<size_t> newClosure = epsilonClosure(newState, nda);
-
-            // Merge the new closure with the existing one
-            closure.insert(newClosure.begin(), newClosure.end());
-        }
+        std::cerr << "undefined behav union" << '\n';
     }
-
-    return closure;
-}
-
-DFA::DFA(NDA &nda)
-{
-    std::queue<std::set<size_t>> toProcess;
-    std::set<std::set<size_t>> processed;
-
-    initialState = epsilonClosure(nda.initialState, nda);
-    toProcess.push(initialState);
-
-    while (!toProcess.empty())
-    {
-        std::set<size_t> currentStates = toProcess.front();
-        toProcess.pop();
-
-        if (processed.count(currentStates))
-        {
-            continue;
-        }
-
-        processed.insert(currentStates);
-
-        // Check if the current DFA state is an accepting state.
-        if (currentStates.count(nda.finalState))
-        {
-            finalStates.insert(currentStates);
-        }
-
-        std::unordered_map<char, std::set<size_t>> toStatesByKey;
-        for (const auto &state : currentStates)
-        {
-            if (nda.transitions.count(state))
-            {
-                for (const auto &[symbol, toStates] : nda.transitions.at(state))
-                {
-                    if (symbol)
-                    {
-                        for (const auto &toState : toStates)
-                        {
-                            std::set<size_t> newClosure = epsilonClosure(toState, nda);
-                            toStatesByKey[symbol].insert(newClosure.begin(), newClosure.end());
-                        }
-                    }
-                }
-            }
-        }
-        for (const auto &[symbol, toStates] : toStatesByKey)
-        {
-            transitions[currentStates][symbol].insert(toStates.begin(), toStates.end());
-
-            if (!processed.count(toStates))
-            {
-                toProcess.push(toStates);
-            }
-        }
-    }
-}
-
-DFA::~DFA()
-{
-}
-
-void DFA::printStates(const std::set<size_t> &states) const
-{
-    for (const auto &state : states)
-    {
-        std::cout << state << ' ';
-    }
-}
-
-void DFA::print()
-{
-    std::cout << "flowchart LR\n";
-
-    size_t indexCounter = 0;
-    std::map<std::set<size_t>, size_t> statesIndecies;
-
-    for (const auto &[fromStates, symbolToStates] : transitions)
-    {
-        if (statesIndecies.find(fromStates) == statesIndecies.end())
-        {
-            statesIndecies[fromStates] = indexCounter++;
-        }
-
-        for (const auto &[symbol, toStates] : symbolToStates)
-        {
-            if (statesIndecies.find(toStates) == statesIndecies.end())
-            {
-                statesIndecies[toStates] = indexCounter++;
-            }
-
-            // for (const auto &toState : toStates)
-            // {
-            if (symbol == EPSILON)
-            {
-                std::cout << "\t" << statesIndecies[fromStates] << "-- ε -->" << statesIndecies[toStates] << "\n";
-            }
-            else
-            {
-                std::cout << "\t" << statesIndecies[fromStates] << "-- " << symbol << " -->" << statesIndecies[toStates] << "\n";
-            }
-            // }
-        }
-        if (finalStates.count(fromStates) == 0 && fromStates != initialState)
-        {
-            std::cout << "\t" << statesIndecies[fromStates] << "((" << statesIndecies[fromStates] << "))\n";
-        }
-    }
-    // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
-    std::cout << "\t" << statesIndecies[initialState] << "((";
-    printStates(initialState);
-    std::cout << " init))\n";
 
     for (const auto &finalState : finalStates)
     {
-        std::cout << "\t" << statesIndecies[finalState] << "(((";
-        printStates(finalState);
-        std::cout << ")))\n";
+        transitions[finalState][EPSILON].insert(nextState);
+        states.insert(finalState);
     }
+    transitions[nextState - 1][EPSILON].insert(nextState);
+    states.insert(nextState - 1);
+
+    states.insert(nextState);
+    finalStates = {nextState++};
+    // finalState = nextState++;
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cerr << "union took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
-std::set<std::set<std::set<size_t>>> DFA::hopcroftPartitions()
+void FSA::concatenateWith(const FSA &other)
 {
-    std::queue<std::set<std::set<size_t>>> pending;
-    std::set<std::set<std::set<size_t>>> partition;
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // Step 1: Partition the states into two sets
-    std::set<std::set<size_t>> nonFinalStates, finalStates;
-
-    for (auto &state : transitions)
+    std::unordered_map<size_t, size_t> visited;
+    if (finalStates.size() != 1)
     {
-        if (finalStates.count(state.first))
-        {
-            finalStates.insert(state.first);
-        }
-        else
-        {
-            nonFinalStates.insert(state.first);
-        }
+        std::cerr << "undefined behav concat1" << '\n';
+    }
+    for (const auto &finalState : finalStates)
+    {
+        copyTransitionsWithOffset(finalState, other, visited);
     }
 
-    partition.insert(finalStates);
-    partition.insert(nonFinalStates);
-
-    pending.push(finalStates);
-    pending.push(nonFinalStates);
-
-    // Step 3: While the queue is not empty
-    while (!pending.empty())
+    finalStates = {};
+    if (other.finalStates.size() != 1)
     {
-        std::set<std::set<size_t>> A = pending.front();
-        pending.pop();
-
-        for (char symbol = 'a'; symbol <= 'z'; ++symbol)
-        {
-            std::set<std::set<std::set<size_t>>> newPartition;
-
-            for (auto &B : partition)
-            {
-                std::set<std::set<size_t>> B1, B2;
-
-                for (auto &state : B)
-                {
-                    std::set<size_t> nextState = transitions[state][symbol];
-                    if (A.count(nextState))
-                    {
-                        B1.insert(state);
-                    }
-                    else
-                    {
-                        B2.insert(state);
-                    }
-                }
-
-                if (!B1.empty())
-                {
-                    newPartition.insert(B1);
-                }
-
-                if (!B2.empty())
-                {
-                    newPartition.insert(B2);
-                }
-            }
-
-            partition = newPartition;
-        }
+        std::cerr << "undefined behav concat2" << '\n';
+    }
+    for (const auto &otherFinalState : other.finalStates)
+    {
+        finalStates.insert(visited[otherFinalState]);
+        nextState = visited[otherFinalState] + other.nextState;
     }
 
-    return partition;
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cerr << "concatenation took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
-class MinimizedDFA
+void FSA::kleene()
 {
-private:
-    size_t initialState;
-    std::set<size_t> finalStates;
-    std::unordered_map<size_t, std::unordered_map<char, size_t>> transitions;
-
-public:
-    MinimizedDFA(){};
-    MinimizedDFA(DFA &dfa);
-    ~MinimizedDFA(){};
-
-    void print();
-};
-
-MinimizedDFA::MinimizedDFA(DFA &dfa)
-{
-    std::set<std::set<std::set<size_t>>> partition = dfa.hopcroftPartitions();
-
-    size_t minimizedStateCounter = 0;
-    std::map<std::set<size_t>, size_t> equivalenceClasses;
-    for (auto &equivalenceClass : partition)
+    if (finalStates.size() != 1)
     {
-        for (auto &state : equivalenceClass)
-        {
-            equivalenceClasses[state] = minimizedStateCounter;
-        }
-        minimizedStateCounter++;
+        std::cerr << "undefined behav union" << '\n';
+    }
+    for (const auto &finalState : finalStates)
+    {
+        transitions[finalState][EPSILON].insert(initialState);
     }
 
-    for (auto &equivalenceClass : partition)
+    states.insert(nextState);
+    transitions[nextState][EPSILON].insert(initialState);
+    initialState = nextState++;
+
+    for (const auto &finalState : finalStates)
     {
-        for (auto &state : equivalenceClass)
-        {
-            for (auto &[symbol, toStates] : dfa.transitions[state])
-            {
-                if (toStates.size())
-                {
-                    transitions[equivalenceClasses[state]][symbol] = equivalenceClasses[toStates];
-                }
-            }
-        }
+        transitions[finalState][EPSILON].insert(nextState);
     }
-    initialState = equivalenceClasses[dfa.initialState];
-    for (auto &dfaFinalState : dfa.finalStates)
-    {
-        finalStates.insert(equivalenceClasses[dfaFinalState]);
-    }
+
+    states.insert(nextState);
+    finalStates = {nextState++};
+
+    transitions[initialState][EPSILON].insert(finalStates.begin(), finalStates.end());
 }
 
-void MinimizedDFA::print()
+void FSA::reverse()
 {
-    std::cout << "flowchart LR\n";
+    auto timeStart = std::chrono::high_resolution_clock::now();
+
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> newTransitions;
     for (const auto &[fromState, symbolToStates] : transitions)
     {
-        for (const auto &[symbol, toState] : symbolToStates)
+        for (const auto &[symbol, toStates] : symbolToStates)
         {
-            std::cout << "\t" << fromState << "-- " << symbol << " -->" << toState << "\n";
-        }
-        if (finalStates.count(fromState) && fromState != initialState)
-        {
-            std::cout << "\t" << fromState << "((" << fromState << "))\n";
+            for (const auto &toState : toStates)
+            {
+                newTransitions[toState][symbol].insert(fromState);
+            }
         }
     }
-    // std::cout << "\t" << initialState << "((" << initialState << " initial ))\n";
-    std::cout << "\t" << initialState << "((" << initialState << " init))\n";
-    for (auto &finalState : finalStates)
+
+    transitions = newTransitions;
+
+    std::unordered_set<size_t> newFinalStates = {initialState};
+    initialState = nextState++;
+    states.insert(initialState);
+    transitions[initialState][EPSILON].insert(finalStates.begin(), finalStates.end());
+    finalStates = newFinalStates;
+
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "reverse took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+}
+
+std::unordered_set<size_t> FSA::epsilonClosure(const std::unordered_set<size_t> &states, std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> &epsilonCache) const
+// std::set<size_t> FSA::epsilonClosure(size_t state, std::unordered_map<size_t, std::unordered_set<size_t>> &epsilon_transitions)
+{
+    if (epsilonCache.count(states))
     {
-        std::cout << "\t" << finalState << "(((" << finalState << ")))\n";
+        return epsilonCache[states];
     }
+
+    auto timeStart = std::chrono::high_resolution_clock::now();
+
+    std::unordered_set<size_t> closure = states;
+
+    std::stack<size_t> stack;
+    for (const auto &state : states)
+    {
+        stack.push(state);
+    }
+
+    while (!stack.empty())
+    {
+        size_t state = stack.top();
+        stack.pop();
+
+        // assuming epsilon transitions are represented by a special character, for example '#'
+        if (transitions.count(state) && transitions.at(state).count('\0'))
+        {
+            for (const auto &newState : transitions.at(state).at('\0'))
+            {
+                if (closure.insert(newState).second)
+                {
+                    stack.push(newState);
+                }
+            }
+        }
+    }
+
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "epsilon closure took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+
+    // epsilon_transitions[state] = closure;
+
+    epsilonCache[states] = closure;
+    return closure;
+}
+
+void FSA::determinize()
+{
+    auto timeStart = std::chrono::high_resolution_clock::now();
+    // Use the power-set construction to create a deterministic FSA
+    FSA dFSA;
+    dFSA.initialState = 0;
+
+    std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> epsilonCache;
+
+    std::queue<std::unordered_set<size_t>> unmarkedStates;
+    auto initialClosure = epsilonClosure({initialState}, epsilonCache);
+    unmarkedStates.push(initialClosure);
+
+    std::unordered_map<std::unordered_set<size_t>, size_t, StateSetHash, StateSetEqual> stateMapping;
+    size_t stateID = 0;
+    stateMapping[initialClosure] = stateID++;
+
+    while (!unmarkedStates.empty())
+    {
+        auto currentState = unmarkedStates.front();
+        unmarkedStates.pop();
+
+        if (std::any_of(currentState.begin(), currentState.end(), [&](size_t s)
+                        { return finalStates.count(s); }))
+        {
+            dFSA.finalStates.insert(stateMapping[currentState]);
+        }
+
+        for (char ch = 'a'; ch <= 'z'; ch++)
+        {
+            std::unordered_set<size_t> newState;
+            for (const auto &state : currentState)
+            {
+                if (transitions.count(state) && transitions.at(state).count(ch))
+                {
+                    for (const auto &next : transitions.at(state).at(ch))
+                    {
+                        auto eClosure = epsilonClosure({next}, epsilonCache);
+                        newState.insert(eClosure.begin(), eClosure.end());
+                    }
+                }
+            }
+
+            if (newState.empty())
+                continue;
+
+            if (stateMapping.count(newState) == 0)
+            {
+                stateMapping[newState] = stateID++;
+                unmarkedStates.push(newState);
+            }
+
+            dFSA.transitions[stateMapping[currentState]][ch] = {stateMapping[newState]};
+        }
+    }
+
+    dFSA.states = std::unordered_set<size_t>(dFSA.finalStates.begin(), dFSA.finalStates.end());
+    for (const auto &transition : dFSA.transitions)
+    {
+        dFSA.states.insert(transition.first);
+        for (const auto &destination : transition.second)
+            dFSA.states.insert(destination.second.begin(), destination.second.end());
+    }
+
+    this->initialState = dFSA.initialState;
+    this->states = dFSA.states;
+    this->finalStates = dFSA.finalStates;
+    this->transitions = dFSA.transitions;
+
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "det took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
 }
