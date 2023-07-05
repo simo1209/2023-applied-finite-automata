@@ -9,6 +9,7 @@
 #include <chrono>
 #include <bitset>
 #include <algorithm>
+#include <list>
 
 constexpr char EPSILON = '\0';
 
@@ -68,9 +69,15 @@ private:
     void kleene();
     void reverse();
 
-    void determinize();
+    void complement();
+    void intersect(const FSA &other);
+    void difference(const FSA &other);
 
-    std::unordered_set<size_t> epsilonClosure(const std::unordered_set<size_t> &startStates, std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> &epsilonCache) const;
+    void determinize();
+    void minimize();
+
+    std::unordered_set<size_t> epsilonClosure(const std::unordered_set<size_t> &startStates) const;
+    void mergeStates(std::unordered_map<size_t, size_t> &partition);
 
 public:
     FSA();
@@ -112,12 +119,15 @@ FSA::~FSA()
 void FSA::print() const
 {
     std::cout << "flowchart LR\n";
+
+    size_t numberOfTransitions = 0;
     for (const auto &[fromState, symbolToStates] : transitions)
     {
         for (const auto &[symbol, toStates] : symbolToStates)
         {
             for (const auto &toState : toStates)
             {
+                ++numberOfTransitions;
                 if (symbol == EPSILON)
                 {
                     std::cout << "\t" << fromState << "-- ε -->" << toState << "\n";
@@ -145,6 +155,9 @@ void FSA::print() const
             std::cout << "\t" << state << "((" << state << " ))\n";
         }
     }
+
+    std::cerr << "Number of states: " << states.size() << '\n';
+    std::cerr << "Number of transitions: " << numberOfTransitions << '\n';
 }
 
 void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
@@ -155,7 +168,8 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other)
 
 void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unordered_map<size_t, size_t> &visited)
 {
-    auto start = std::chrono::high_resolution_clock::now();
+    // auto start = std::chrono::high_resolution_clock::now();
+
     std::queue<std::pair<size_t, size_t>> FSAQueue;
 
     visited[other.initialState] = offset;
@@ -197,8 +211,8 @@ void FSA::copyTransitionsWithOffset(size_t offset, const FSA &other, std::unorde
     }
 
     nextState = offset + 1;
-    auto end = std::chrono::high_resolution_clock::now();
-    std::cerr << "copying transitions took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
+    // auto end = std::chrono::high_resolution_clock::now();
+    // std::cerr << "copying transitions took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
 bool FSA::isOperator(char ch)
@@ -235,11 +249,17 @@ void FSA::process_operator(std::stack<FSA *> &automatas, char op)
     if (op == '*')
     {
         a->kleene();
+        a->determinize();
         automatas.push(a);
     }
     else if (op == '^')
     {
         a->reverse();
+        automatas.push(a);
+    }
+    else if ( op == '~' )
+    {
+        a->complement();
         automatas.push(a);
     }
     else
@@ -256,11 +276,15 @@ void FSA::process_operator(std::stack<FSA *> &automatas, char op)
             break;
         case '|':
             b->unionWith(*a);
+            b->determinize();
             automatas.push(b);
             delete a;
 
             break;
-        case '^':
+        case '-':
+            b->difference(*a);
+            b->determinize();
+            automatas.push(b);
             break;
         }
     }
@@ -268,6 +292,8 @@ void FSA::process_operator(std::stack<FSA *> &automatas, char op)
 
 FSA *FSA::parseExpression(const std::string &expression)
 {
+    auto timeStart = std::chrono::high_resolution_clock::now();
+
     std::stack<FSA *> automatas;
     std::stack<char> operators;
 
@@ -304,7 +330,7 @@ FSA *FSA::parseExpression(const std::string &expression)
             operators.pop();
             expect_operator = true;
         }
-        else if (ch == '*' || ch == '^')
+        else if (ch == '*' || ch == '^' || ch == '~')
         {
             if (!expect_operator)
             {
@@ -349,7 +375,13 @@ FSA *FSA::parseExpression(const std::string &expression)
         process_operator(automatas, '&');
     }
 
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "nda build took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+
+    automatas.top()->print();
+
     automatas.top()->determinize();
+    automatas.top()->minimize();
     return automatas.top();
 }
 
@@ -411,7 +443,8 @@ bool FSA::accepts(const std::string &word)
 */
 void FSA::unionWith(const FSA &other)
 {
-    auto start = std::chrono::high_resolution_clock::now();
+    // auto start = std::chrono::high_resolution_clock::now();
+
     size_t newInitialState = nextState++;
     states.insert(newInitialState);
 
@@ -423,7 +456,7 @@ void FSA::unionWith(const FSA &other)
 
     if (finalStates.size() != 1)
     {
-        std::cerr << "undefined behav union" << '\n';
+        // std::cerr << "undefined behav union" << '\n';
     }
 
     for (const auto &finalState : finalStates)
@@ -437,18 +470,19 @@ void FSA::unionWith(const FSA &other)
     states.insert(nextState);
     finalStates = {nextState++};
     // finalState = nextState++;
-    auto end = std::chrono::high_resolution_clock::now();
-    std::cerr << "union took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
+
+    // auto end = std::chrono::high_resolution_clock::now();
+    // std::cerr << "union took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
 void FSA::concatenateWith(const FSA &other)
 {
-    auto start = std::chrono::high_resolution_clock::now();
+    // auto start = std::chrono::high_resolution_clock::now();
 
     std::unordered_map<size_t, size_t> visited;
     if (finalStates.size() != 1)
     {
-        std::cerr << "undefined behav concat1" << '\n';
+        // std::cerr << "undefined behav concat1" << '\n';
     }
     for (const auto &finalState : finalStates)
     {
@@ -458,7 +492,7 @@ void FSA::concatenateWith(const FSA &other)
     finalStates = {};
     if (other.finalStates.size() != 1)
     {
-        std::cerr << "undefined behav concat2" << '\n';
+        // std::cerr << "undefined behav concat2" << '\n';
     }
     for (const auto &otherFinalState : other.finalStates)
     {
@@ -466,15 +500,15 @@ void FSA::concatenateWith(const FSA &other)
         nextState = visited[otherFinalState] + other.nextState;
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::cerr << "concatenation took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
+    // auto end = std::chrono::high_resolution_clock::now();
+    // std::cerr << "concatenation took: " << end.time_since_epoch().count() - start.time_since_epoch().count() << " nanoseconds\n";
 }
 
 void FSA::kleene()
 {
     if (finalStates.size() != 1)
     {
-        std::cerr << "undefined behav union" << '\n';
+        // std::cerr << "undefined behav union" << '\n';
     }
     for (const auto &finalState : finalStates)
     {
@@ -524,15 +558,38 @@ void FSA::reverse()
     std::cerr << "reverse took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
 }
 
-std::unordered_set<size_t> FSA::epsilonClosure(const std::unordered_set<size_t> &states, std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> &epsilonCache) const
-// std::set<size_t> FSA::epsilonClosure(size_t state, std::unordered_map<size_t, std::unordered_set<size_t>> &epsilon_transitions)
+void FSA::complement()
 {
-    if (epsilonCache.count(states))
+    std::unordered_set<size_t> newFinalStates;
+
+    for ( const auto &state : states )
     {
-        return epsilonCache[states];
+        if ( ! finalStates.count(state) )
+        {
+            newFinalStates.insert(state);
+        }
     }
 
-    auto timeStart = std::chrono::high_resolution_clock::now();
+    finalStates = newFinalStates;
+}
+
+void FSA::intersect( const FSA& other )
+{
+    other.print();
+}
+
+void FSA::difference(const FSA& other)
+{
+    FSA c(other);
+    c.complement();
+    intersect(c);
+}
+
+std::unordered_set<size_t> FSA::epsilonClosure(const std::unordered_set<size_t> &states) const
+// std::set<size_t> FSA::epsilonClosure(size_t state, std::unordered_map<size_t, std::unordered_set<size_t>> &epsilon_transitions)
+{
+
+    // auto timeStart = std::chrono::high_resolution_clock::now();
 
     std::unordered_set<size_t> closure = states;
 
@@ -560,13 +617,22 @@ std::unordered_set<size_t> FSA::epsilonClosure(const std::unordered_set<size_t> 
         }
     }
 
-    auto timeEnd = std::chrono::high_resolution_clock::now();
-    std::cerr << "epsilon closure took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+    // auto timeEnd = std::chrono::high_resolution_clock::now();
+    // std::cerr << "epsilon closure took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
 
     // epsilon_transitions[state] = closure;
 
-    epsilonCache[states] = closure;
     return closure;
+}
+
+std::string setToString(std::set<size_t> &s)
+{
+    std::string res = "";
+    for (const auto &state : s)
+    {
+        res += std::to_string(state) + ",";
+    }
+    return res;
 }
 
 void FSA::determinize()
@@ -576,18 +642,27 @@ void FSA::determinize()
     FSA dFSA;
     dFSA.initialState = 0;
 
-    std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> epsilonCache;
+    // std::unordered_map<std::unordered_set<size_t>, std::unordered_set<size_t>, StateSetHash, StateSetEqual> epsilonCache;
 
     std::queue<std::unordered_set<size_t>> unmarkedStates;
-    auto initialClosure = epsilonClosure({initialState}, epsilonCache);
+    auto initialClosure = epsilonClosure({initialState});
+    // epsilonCache[{initialState}] = initialClosure;
+
     unmarkedStates.push(initialClosure);
 
     std::unordered_map<std::unordered_set<size_t>, size_t, StateSetHash, StateSetEqual> stateMapping;
+
     size_t stateID = 0;
     stateMapping[initialClosure] = stateID++;
 
+    // StateSetEqual sse;
+
     while (!unmarkedStates.empty())
     {
+        // std::cerr << "queue size: " << unmarkedStates.size() << '\n';
+        // std::cerr << "cache size: " << epsilonCache.size() << '\n';
+        // std::cerr << "map size: " << stateMapping.size() << '\n';
+
         auto currentState = unmarkedStates.front();
         unmarkedStates.pop();
 
@@ -606,8 +681,17 @@ void FSA::determinize()
                 {
                     for (const auto &next : transitions.at(state).at(ch))
                     {
-                        auto eClosure = epsilonClosure({next}, epsilonCache);
+                        // if (epsilonCache.count({next}))
+                        // {
+                        // auto eClosure = epsilonCache[{next}];
+                        // newState.insert(eClosure.begin(), eClosure.end());
+                        // }
+                        // else
+                        // {
+                        auto eClosure = epsilonClosure({next});
+                        // epsilonCache[{next}] = eClosure;
                         newState.insert(eClosure.begin(), eClosure.end());
+                        // }
                     }
                 }
             }
@@ -621,16 +705,28 @@ void FSA::determinize()
                 unmarkedStates.push(newState);
             }
 
+            // if (!sse(currentState, newState))
+            // {
+            //     unmarkedStates.push(newState);
+            // }
+
             dFSA.transitions[stateMapping[currentState]][ch] = {stateMapping[newState]};
         }
     }
 
     dFSA.states = std::unordered_set<size_t>(dFSA.finalStates.begin(), dFSA.finalStates.end());
-    for (const auto &transition : dFSA.transitions)
+    size_t transitions_count = 0;
+    for (const auto &[fromState, symbolToStates] : dFSA.transitions)
     {
-        dFSA.states.insert(transition.first);
-        for (const auto &destination : transition.second)
-            dFSA.states.insert(destination.second.begin(), destination.second.end());
+        dFSA.states.insert(fromState);
+        for (const auto &[symbol, toStates] : symbolToStates)
+        {
+            for (const auto &toState : toStates)
+            {
+                dFSA.states.insert(toState);
+                ++transitions_count;
+            }
+        }
     }
 
     this->initialState = dFSA.initialState;
@@ -640,4 +736,378 @@ void FSA::determinize()
 
     auto timeEnd = std::chrono::high_resolution_clock::now();
     std::cerr << "det took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+    std::cerr << "states count:" << states.size() << '\n';
+    std::cerr << "transitions count:" << transitions_count << '\n';
+}
+/*
+void FSA::minimize()
+{
+    auto timeStart = std::chrono::high_resolution_clock::now();
+
+    std::unordered_set<size_t> nonFinalStates;
+    std::set_difference(states.begin(), states.end(), finalStates.begin(), finalStates.end(),
+                        std::inserter(nonFinalStates, nonFinalStates.begin()));
+
+    // Initial partitions
+    std::vector<std::unordered_set<size_t>> partitions = {finalStates, nonFinalStates};
+
+    // The list of partitions to be checked
+    std::list<std::unordered_set<size_t>> toCheck(partitions.begin(), partitions.end());
+
+    while (!toCheck.empty())
+    {
+        // Pick and remove a partition from the list
+        std::unordered_set<size_t> partition = toCheck.front();
+        toCheck.pop_front();
+
+        // Iterate over the set of input symbols
+        for (char symbol = 'a'; symbol <= 'z'; ++symbol)
+        {
+            // States that transition to the current partition with the current symbol
+            std::unordered_set<size_t> relatedStates;
+
+            for (const auto &state : partition)
+            {
+                for (const auto &transition : transitions[state][symbol])
+                {
+                    relatedStates.insert(transition);
+                }
+            }
+
+            // Iterate over all partitions
+            for (auto it = partitions.begin(); it != partitions.end();)
+            {
+                // Split partitions in two: states that transition to the current partition and those that don't
+                std::unordered_set<size_t> intersection, difference;
+                std::set_intersection(it->begin(), it->end(), relatedStates.begin(), relatedStates.end(),
+                                      std::inserter(intersection, intersection.begin()));
+                std::set_difference(it->begin(), it->end(), relatedStates.begin(), relatedStates.end(),
+                                    std::inserter(difference, difference.begin()));
+
+                // If one of the sets is empty, don't split the partition
+                if (intersection.empty() || difference.empty())
+                {
+                    ++it;
+                    continue;
+                }
+
+                // Replace the original partition with the intersection and add the difference as a new partition
+                *it = intersection;
+                it = partitions.insert(it, difference);
+
+                // If the original partition is in the list to be checked, replace it with the intersection
+                if (std::find(toCheck.begin(), toCheck.end(), *it) != toCheck.end())
+                {
+                    toCheck.remove(*it);
+                    toCheck.push_back(*it);
+                    toCheck.push_back(intersection);
+                }
+                // Otherwise, add the smaller partition to the list to be checked
+                else
+                {
+                    if (intersection.size() <= difference.size())
+                    {
+                        toCheck.push_back(intersection);
+                    }
+                    else
+                    {
+                        toCheck.push_back(difference);
+                    }
+                }
+            }
+        }
+    }
+
+    std::unordered_set<size_t> newStates;
+    std::unordered_map<std::unordered_set<size_t> *, size_t> partitionIndices;
+    size_t index = 0;
+    for (auto &partition : partitions)
+    {
+        newStates.insert(index);
+        partitionIndices[&partition] = index++;
+    }
+
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> newTransitions;
+    std::unordered_set<size_t> newFinalStates;
+
+    for (auto &partition : partitions)
+    {
+        size_t partitionIndex = partitionIndices[&partition];
+
+        // Update final states
+        std::unordered_set<size_t> intersection;
+        std::set_intersection(partition.begin(), partition.end(), finalStates.begin(), finalStates.end(),
+                              std::inserter(intersection, intersection.begin()));
+        if (!intersection.empty())
+        {
+            newFinalStates.insert(partitionIndex);
+        }
+
+        // Update transitions
+        size_t representativeState = *partition.begin(); // choose a representative state from each partition
+        for (const auto &transition : transitions[representativeState])
+        {
+            char symbol = transition.first;
+            size_t destinationState = *transition.second.begin(); // assuming there is only one transition for each pair of state and symbol
+
+            // Find the partition of the destination state
+            auto destinationPartition = std::find_if(partitions.begin(), partitions.end(),
+                                                     [destinationState](const auto &partition)
+                                                     {
+                                                         return partition.find(destinationState) != partition.end();
+                                                     });
+            if (destinationPartition != partitions.end())
+            {
+                size_t destinationPartitionIndex = partitionIndices[&*destinationPartition];
+                newTransitions[partitionIndex][symbol] = {destinationPartitionIndex};
+            }
+        }
+    }
+
+    // Update the DFA
+
+    this->states = newStates;
+    this->finalStates = newFinalStates;
+    this->transitions = newTransitions;
+
+    // this->initialState = newInitialState;
+    // this->states = newStates;
+    // this->finalStates = newFinalStates;
+    // this->transitions = newTransitions;
+
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "minimize took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+}
+
+*/
+
+/*
+void FSA::minimize()
+{
+    auto timeStart = std::chrono::high_resolution_clock::now();
+
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> inverseTransitions;
+    for ( const auto &[fromState, symbolToStates] : transitions )
+    {
+        for ( const auto &[symbol, toStates] : symbolToStates )
+        {
+            for ( const auto &toState : toStates)
+            {
+                inverseTransitions[toState][symbol].insert(fromState);
+            }
+        }
+    }
+
+    std::unordered_map<size_t, size_t> partition;
+
+    std::vector<std::unordered_set<size_t>> P(states.size());
+
+    for (auto &state : states)
+    {
+        if (finalStates.count(state) > 0)
+        {
+            P[0].insert(state);
+            partition[state] = 0;
+        }
+        else
+        {
+            P[1].insert(state);
+            partition[state] = 1;
+        }
+    }
+
+    std::vector<std::unordered_set<size_t>> W = {P[0], P[1]};
+
+    while (!W.empty())
+    {
+        std::unordered_set<size_t> A = W.back();
+        W.pop_back();
+
+        for (char a = 'a'; a <= 'z'; a++)
+        {
+            std::unordered_map<size_t, std::unordered_set<size_t>> connected;
+            for (auto q : A)
+            {
+                for (auto state : states)
+                {
+                    if (transitions[state][a].count(q))
+                    {
+                        connected[partition[state]].insert(state);
+                    }
+                }
+            }
+
+            for (auto &[r, statesConnected] : connected)
+            {
+                if (statesConnected.size() < P[r].size())
+                {
+                    size_t j = P.size();
+                    P.push_back({});
+                    for (auto state : statesConnected)
+                    {
+                        P[r].erase(state);
+                        P[j].insert(state);
+                        partition[state] = j;
+                    }
+
+                    auto it = std::find(W.begin(), W.end(), P[r]);
+                    if (it != W.end())
+                    {
+                        W.push_back(P[j]);
+                    }
+                    else
+                    {
+                        if (P[r].size() <= P[j].size())
+                        {
+                            W.push_back(P[r]);
+                        }
+                        else
+                        {
+                            W.push_back(P[j]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Now merge states in the same partition and update the transitions
+    mergeStates(partition);
+
+    auto timeEnd = std::chrono::high_resolution_clock::now();
+    std::cerr << "minimization took: " << timeEnd.time_since_epoch().count() - timeStart.time_since_epoch().count() << " nanoseconds\n";
+}
+*/
+
+void FSA::minimize()
+{
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> inverseTransitions;
+    for (const auto &[fromState, symbolToStates] : transitions)
+    {
+        for (const auto &[symbol, toStates] : symbolToStates)
+        {
+            for (const auto &toState : toStates)
+            {
+                inverseTransitions[toState][symbol].insert(fromState);
+            }
+        }
+    }
+
+    std::unordered_map<size_t, size_t> partition;
+    std::vector<std::unordered_set<size_t>> P(states.size());
+
+    for (auto &state : states)
+    {
+        if (finalStates.count(state) > 0)
+        {
+            P[0].insert(state);
+            partition[state] = 0;
+        }
+        else
+        {
+            P[1].insert(state);
+            partition[state] = 1;
+        }
+    }
+
+    std::vector<std::unordered_set<size_t>> W = {P[0], P[1]};
+
+    while (!W.empty())
+    {
+        std::unordered_set<size_t> A = W.back();
+        W.pop_back();
+
+        for (char a = 'a'; a <= 'z'; a++)
+        {
+            std::unordered_map<size_t, std::unordered_set<size_t>> connected;
+
+            for (auto q : A)
+            {
+                // Use the inverse transition function to improve efficiency
+                if (inverseTransitions[q].count(a))
+                {
+                    for (auto state : inverseTransitions[q][a])
+                    {
+                        connected[partition[state]].insert(state);
+                    }
+                }
+            }
+
+            for (auto &[r, statesConnected] : connected)
+            {
+                if (statesConnected.size() < P[r].size())
+                {
+                    size_t j = P.size();
+                    P.push_back({});
+                    for (auto state : statesConnected)
+                    {
+                        P[r].erase(state);
+                        P[j].insert(state);
+                        partition[state] = j;
+                    }
+
+                    auto it = std::find(W.begin(), W.end(), P[r]);
+                    if (it != W.end())
+                    {
+                        W.push_back(P[j]);
+                    }
+                    else
+                    {
+                        if (P[r].size() <= P[j].size())
+                        {
+                            W.push_back(P[r]);
+                        }
+                        else
+                        {
+                            W.push_back(P[j]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Now merge states in the same partition and update the transitions
+    mergeStates(partition);
+}
+
+void FSA::mergeStates(std::unordered_map<size_t, size_t> &partition)
+{
+    std::unordered_map<size_t, size_t> representative;
+    std::unordered_set<size_t> newFinalStates;
+    std::unordered_map<size_t, std::unordered_map<char, std::unordered_set<size_t>>> newTransitions;
+
+    for (const auto &[state, part] : partition)
+    {
+        if (representative.find(part) == representative.end())
+        {
+            representative[part] = state;
+        }
+        if (finalStates.find(state) != finalStates.end())
+        {
+            newFinalStates.insert(representative[part]);
+        }
+    }
+
+    for (const auto &[state, part] : partition)
+    {
+        for (const auto &[a, dest] : transitions[state])
+        {
+            for (const auto &toState : dest)
+            {
+                newTransitions[representative[part]][a].insert(representative[partition[toState]]);
+            }
+        }
+    }
+
+    // Update FSA states, finalStates, and transitions
+    states.clear();
+    for (const auto &[_, state] : representative)
+    {
+        states.insert(state);
+    }
+
+    finalStates = newFinalStates;
+    transitions = newTransitions;
+    initialState = representative[partition[initialState]];
 }
